@@ -1,0 +1,24 @@
+services:
+  # 데이터베이스 역할을 할 서비스
+  db:
+    image: postgres:17
+    container_name: postgres_db
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: root
+      POSTGRES_DB: ny_taxi
+    ports:
+      - "5433:5432"
+    volumes:
+      # 내 컴퓨터의 ny_taxi_data 폴더와 컨테이너 내부 폴더를 연결해서 데이터를 유지해요
+      - ./ny_taxi_data:/var/lib/postgresql/data
+
+  # DB를 눈으로 보게 해줄 관리 도구
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin_panel
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: root
+    ports:
+      - "8080:80"
