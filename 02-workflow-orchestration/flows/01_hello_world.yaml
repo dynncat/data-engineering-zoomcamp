@@ -1,0 +1,69 @@
+# 워크플로우의 고유 주소
+id: 01_hello_world
+  # 절대 바꾸면 안됨
+  # 이거 바꿀 거면 새로운 workflow 만들어야 함
+namespace: zoomcamp
+  # 폴더 구조 (zoomcamp 폴더 안에 01-hello-world 라는 작업이 있음)
+
+inputs:
+  - id: name
+    type: STRING
+    defaults: Will
+
+# 이런 종류의 워크플로우를 한 번에 몇개까지 돌릴 수 있게 할 건지
+# 2개 초과로 돌리면 FAIL 하도록 설정
+concurrency:
+  behavior: FAIL
+  limit: 2
+
+# 변수 설정
+variables:
+  welcome_message: "Hello, {{ inputs.name }}!"
+  
+# 각 태스크에 대한 정의, 태스크 이름에 맞춰서 id 적어주기
+# type에 가장 마지막에 각 태스크의 역할이 적혀있음
+# message에 적합한 properties를 적어줌 (property가 필요하면 적는 거)
+# GUI 쓰면 각 태스크 클릭하면 Documentation에 예시가 나옴 (활용 추천)
+tasks:
+  # 터미널에 글자를 찍는 역할
+  - id: hello_message
+    type: io.kestra.plugin.core.log.Log
+    message: "{{ render(vars.welcome_message) }}"
+      # variables에 정의한 변수를 가져와서 화면에 출력하라는 명령어
+  
+  - id: generate_output
+    type: io.kestra.plugin.core.debug.Return
+      # 테스트용으로 데이터를 "생성"해서 다음 단계로 넘겨줄 때 사용
+      # 여기서 생성된 값은 outputs.generate_output.value라는 이름으로 저장되어 뒷 작업에서 꺼내 쓸 수 있음
+    format: I was generated during this workflow.
+
+  - id: sleep
+    type: io.kestra.plugin.core.flow.Sleep
+    duration: PT5S
+      # Period Time 5 Seconds
+
+  - id: log_output
+    type: io.kestra.plugin.core.log.Log
+    message: "This is an output: {{ outputs.generate_output.value }}"
+
+  - id: goodbye_message
+    type: io.kestra.plugin.core.log.Log
+    message: "Goodbye, {{ inputs.name }}!"
+
+pluginDefaults:
+  - type: io.kestra.plugin.core.log.Log
+    values:
+      level: ERROR
+        # Kestra 내의 모든 Log 타입 작업에 대해 "기본값(Default)으로 로그 레벨을 ERROR로 설정해라"라고 선언
+
+# triggers가 없으면 워크플로우 실행할 수 없음
+# 여기서는 스케줄 사용
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 10 * * *"
+      # 매일 오전 10시 0분에 자동으로 실행하라는 정기 스케줄링 설정
+    inputs:
+      name: Sarah
+    disabled: true
+      # 지금은 '꺼짐' 상태 (수동으로 실행 버튼을 누를 때만 돌아감)

@@ -218,3 +218,5 @@ __marimo__/
 .DS_Store
 
 ny_taxi_data/
+
+docker-compose.yaml

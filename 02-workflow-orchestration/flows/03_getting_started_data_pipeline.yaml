@@ -1,0 +1,79 @@
+id: 03_getting_started_data_pipeline
+namespace: zoomcamp
+
+# 동적인 변수 지정을 가능하게 해줌 (for 코드 재사용)
+# inputs에서 선언한 칼럼 명을 transform 단계에서 환경변수로 전달함
+inputs:
+    # 외부에서 입력받을 변수 이름
+  - id: columns_to_keep
+    # 데이터 타입은 리스트 (배열)
+    type: ARRAY
+    # 리스트 안에는 문자열이 들어감
+    itemType: STRING
+    # 기본값 설정
+    defaults:
+      - brand
+      - price
+
+tasks:
+  # http request 통해서 json 추출 = API 호출
+  # 이렇게 추출하면 code, headers, length, url 뽑힘
+  - id: extract
+    type: io.kestra.plugin.core.http.Download   # HTTP 다운로드 플러그인 사용
+    uri: https://dummyjson.com/products
+
+  # 위 json에서 필요한 데이터 추출
+  - id: transform
+    type: io.kestra.plugin.scripts.python.Script  # 파이썬 스크립트 실행 플러그인
+    containerImage: python:3.11-alpine
+    inputFiles:
+      # 'extract' 태스크에서 받은 파일을 'data.json'이라는 이름으로 가져옴
+      data.json: "{{outputs.extract.uri}}"
+    # 스크립트 실행 후 생성된 모든 json 파일을 결과물로 내보냄
+    outputFiles:
+      - "*.json"
+    # 입력받은 필터링 컬럼 리스트를 환경변수로 전달
+    env:
+      COLUMNS_TO_KEEP: "{{inputs.columns_to_keep}}"
+    script: |
+      import json
+      import os
+
+      # 환경변수에서 남길 컬럼 리스트를 가져와 파이썬 리스트로 변환
+      columns_to_keep_str = os.getenv("COLUMNS_TO_KEEP")
+      columns_to_keep = json.loads(columns_to_keep_str)
+
+      # 'extract' 태스크에서 가져온 원본 데이터 읽기
+      with open("data.json", "r") as file:
+          data = json.load(file)
+
+      # 필요한 컬럼(brand, price 등)만 남기는 필터링 로직
+      filtered_data = [
+          {column: product.get(column, "N/A") for column in columns_to_keep}
+          for product in data["products"]
+      ]
+
+      # 필터링된 데이터를 'products.json'으로 저장 (outputFiles 설정에 의해 밖으로 나감)
+      with open("products.json", "w") as file:
+          json.dump(filtered_data, file, indent=4)
+      # {
+      #   "brand": "Essence",
+      #   "price": 9.99
+      # }
+      # 이런 형식으로 가공됨
+
+  # 가공된 데이터를 DuckDB라는 가벼운 DB에 넣어 적재
+  - id: query
+    type: io.kestra.plugin.jdbc.duckdb.Queries  # DuckDB 실행 플러그인
+    # 파이썬 스크립트로 만든 파일 가져오기
+    inputFiles:
+      products.json: "{{outputs.transform.outputFiles['products.json']}}"
+    sql: |
+      INSTALL json; # DuckDB에 JSON 확장 기능 설치
+      LOAD json;  # JSON 확장 기능 로드
+      SELECT brand, round(avg(price), 2) as avg_price
+      FROM read_json_auto('{{workingDir}}/products.json')
+      GROUP BY brand
+      ORDER BY avg_price DESC;
+    # 쿼리 결과를 Kestra 내부에 저장해서 나중에 볼 수 있게 함
+    fetchType: STORE

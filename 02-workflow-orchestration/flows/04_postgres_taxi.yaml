@@ -1,0 +1,311 @@
+id: 04_postgres_taxi
+namespace: zoomcamp
+description: |
+  The CSV Data used in the course: https://github.com/DataTalksClub/nyc-tlc-data/releases
+
+inputs:
+  - id: taxi
+    type: SELECT  # 드롭다운 선택 형식
+    displayName: Select taxi type
+    values: [yellow, green] # 노랑 또는 초록 택시 선택
+    defaults: yellow
+
+  - id: year
+    type: SELECT
+    displayName: Select year
+    values: ["2019", "2020"]
+    defaults: "2019"
+
+  - id: month
+    type: SELECT
+    displayName: Select month
+    values: ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]
+    defaults: "01"
+
+variables:
+  # 입력받은 값을 조합해 파일명을 만들기 (예: yellow_tripdata_2019-01.csv)
+  file: "{{inputs.taxi}}_tripdata_{{inputs.year}}-{{inputs.month}}.csv"
+  # 원본 데이터를 임시로 담을 스테이징 테이블 이름
+  staging_table: "public.{{inputs.taxi}}_tripdata_staging"
+  # 최종 데이터가 저장될 테이블 이름
+  table: "public.{{inputs.taxi}}_tripdata"
+  # 추출된 파일의 내부 경로를 참조
+  data: "{{outputs.extract.outputFiles[inputs.taxi ~ '_tripdata_' ~ inputs.year ~ '-' ~ inputs.month ~ '.csv']}}"
+
+tasks:
+  # 실행 기록에 파일명을 라벨로 붙여서 나중에 찾기 쉽게 함
+  - id: set_label
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      # render(): 보기좋거나 쓰기 좋게 변환해서 리턴해줌 (여기선 재귀적으로 쓰임)
+      file: "{{render(vars.file)}}"
+      taxi: "{{inputs.taxi}}"
+
+  - id: extract
+    type: io.kestra.plugin.scripts.shell.Commands # 터미널 명령 실행
+    outputFiles:
+      - "*.csv"
+    # 이미 했던 작업을 또 할 때 (여기서는 같은 csv를 또 적재할 때) 캐싱할 수 있음
+    # purge_files 태스크랑 선택해서 사용할 수 있음
+    taskCache:
+      enabled: true
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    # wget으로 .gz파일을 받고, gunzip으로 압축을 풀어 csv 파일로 저장
+    commands:
+      - wget -qO- https://github.com/DataTalksClub/nyc-tlc-data/releases/download/{{inputs.taxi}}/{{render(vars.file)}}.gz | gunzip > {{render(vars.file)}}
+
+  # yellow taxi 일 때만 실행되는 구간
+  - id: if_yellow_taxi
+    type: io.kestra.plugin.core.flow.If # 조건문 시작
+    condition: "{{inputs.taxi == 'yellow'}}"
+    # 조건이 참일 때 실행할 작업 리스트
+    then:
+      # 메인 테이블이 없으면 생성
+      - id: yellow_create_table
+        type: io.kestra.plugin.jdbc.postgresql.Queries
+        sql: |
+          CREATE TABLE IF NOT EXISTS {{render(vars.table)}} (
+              unique_row_id          text,    -- 중복 방지를 위한 고유 ID
+              filename               text,    -- 어떤 파일에서 왔는지 기록
+              VendorID               text,
+              tpep_pickup_datetime   timestamp,
+              tpep_dropoff_datetime  timestamp,
+              passenger_count        integer,
+              trip_distance          double precision,
+              RatecodeID             text,
+              store_and_fwd_flag     text,
+              PULocationID           text,
+              DOLocationID           text,
+              payment_type           integer,
+              fare_amount            double precision,
+              extra                  double precision,
+              mta_tax                double precision,
+              tip_amount             double precision,
+              tolls_amount           double precision,
+              improvement_surcharge  double precision,
+              total_amount           double precision,
+              congestion_surcharge   double precision
+          );
+
+      # 임시(Staging) 테이블 생성
+      # md5 생성 등 가공 중 에러 나더라도 원본 데이터 보호, 중복 데이터 제거를 위해 임시 테이블에 먼저 넣음
+      - id: yellow_create_staging_table
+        type: io.kestra.plugin.jdbc.postgresql.Queries
+        sql: |
+          CREATE TABLE IF NOT EXISTS {{render(vars.staging_table)}} (
+              unique_row_id          text,
+              filename               text,
+              VendorID               text,
+              tpep_pickup_datetime   timestamp,
+              tpep_dropoff_datetime  timestamp,
+              passenger_count        integer,
+              trip_distance          double precision,
+              RatecodeID             text,
+              store_and_fwd_flag     text,
+              PULocationID           text,
+              DOLocationID           text,
+              payment_type           integer,
+              fare_amount            double precision,
+              extra                  double precision,
+              mta_tax                double precision,
+              tip_amount             double precision,
+              tolls_amount           double precision,
+              improvement_surcharge  double precision,
+              total_amount           double precision,
+              congestion_surcharge   double precision
+          );
+
+      # 임시 테이블의 기존 데이터를 싹 비움
+      # 그때 그때 가공하는 데이터에 대한 임시 보관만 하는 테이블이라 실행되기 전에 싹 비워줌
+      - id: yellow_truncate_staging_table
+        type: io.kestra.plugin.jdbc.postgresql.Queries
+        sql: |
+          TRUNCATE TABLE {{render(vars.staging_table)}};
+
+      # CSV 파일을 DB 임시 테이블로 고속 복사
+      - id: yellow_copy_in_to_staging_table
+        type: io.kestra.plugin.jdbc.postgresql.CopyIn
+        format: CSV
+        from: "{{render(vars.data)}}"
+        table: "{{render(vars.staging_table)}}"
+        # 첫 줄은 제목(Header)임
+        header: true
+        # 넣을 컬럼 순서 지정
+        columns: [VendorID,tpep_pickup_datetime,tpep_dropoff_datetime,passenger_count,
+                  trip_distance,RatecodeID,store_and_fwd_flag,PULocationID,DOLocationID,
+                  payment_type,fare_amount,extra,mta_tax,tip_amount,tolls_amount,
+                  improvement_surcharge,total_amount,congestion_surcharge]
+
+      # 데이터 가공 (ID 생성)
+      - id: yellow_add_unique_id_and_filename
+        type: io.kestra.plugin.jdbc.postgresql.Queries
+        sql: |
+          UPDATE {{render(vars.staging_table)}}
+          SET 
+            -- 여러 컬럼을 합쳐서 MD5 해시값을 만들어 고유 ID 생성 (중복 체크용)
+            -- MD5(Message-Digest algorithm 5): 어떤 길이를 가진 데이터(문장, 파일, 숫자 등)를 입력해도 항상 32글자의 일정한 길이의 문자열로 바꿔주는 함수
+            -- 원본 데이터에는 데이터 ID가 없는 경우가 많아서 여러 칼럼을 하나로 합친 다음에 MD5 돌려서 고유 ID 만듦
+            -- 나중에 혹시나 같은 파일을 또 읽더라도 그 MD5 값이 이미 DB에 있으면 건너뛸 수 있음
+            -- 여기서는 VenderId, tpep_pickup_datetime, (...) fare_amount, trip_distance를 하나로 이어 붙여서 (||)
+            -- 데이터가 비어있을 때(NULL) 에러가 나지 않게 빈칸으로 바꿔주고 (COALESCE)
+            -- 다 합쳐진 긴 문장을 md5()에 넣어서 딱 32글자의 고유 키로 변환시킴
+            unique_row_id = md5(
+              COALESCE(CAST(VendorID AS text), '') ||
+              COALESCE(CAST(tpep_pickup_datetime AS text), '') || 
+              COALESCE(CAST(tpep_dropoff_datetime AS text), '') || 
+              COALESCE(PULocationID, '') || 
+              COALESCE(DOLocationID, '') || 
+              COALESCE(CAST(fare_amount AS text), '') || 
+              COALESCE(CAST(trip_distance AS text), '')      
+            ),
+            filename = '{{render(vars.file)}}';
+
+      # 메인 테이블로 합치기
+      - id: yellow_merge_data
+        type: io.kestra.plugin.jdbc.postgresql.Queries
+        sql: |
+          -- MERGE INTO: 이미 있는 데이터면 무시하고, 없는 데이터만 넣어라 (= Upsert)
+          MERGE INTO {{render(vars.table)}} AS T
+          USING {{render(vars.staging_table)}} AS S
+          -- 타겟 테이블의 unique_row_id와 소스 테이블의 unique_row_id를 대조
+          ON T.unique_row_id = S.unique_row_id
+          -- 일치하는 ID가 없을 때만 새 데이터 넣기
+          WHEN NOT MATCHED THEN
+            INSERT (
+              unique_row_id, filename, VendorID, tpep_pickup_datetime, tpep_dropoff_datetime,
+              passenger_count, trip_distance, RatecodeID, store_and_fwd_flag, PULocationID,
+              DOLocationID, payment_type, fare_amount, extra, mta_tax, tip_amount, tolls_amount,
+              improvement_surcharge, total_amount, congestion_surcharge
+            )
+            VALUES (
+              S.unique_row_id, S.filename, S.VendorID, S.tpep_pickup_datetime, S.tpep_dropoff_datetime,
+              S.passenger_count, S.trip_distance, S.RatecodeID, S.store_and_fwd_flag, S.PULocationID,
+              S.DOLocationID, S.payment_type, S.fare_amount, S.extra, S.mta_tax, S.tip_amount, S.tolls_amount,
+              S.improvement_surcharge, S.total_amount, S.congestion_surcharge
+            );
+
+  - id: if_green_taxi
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{inputs.taxi == 'green'}}"
+    then:
+      - id: green_create_table
+        type: io.kestra.plugin.jdbc.postgresql.Queries
+        sql: |
+          CREATE TABLE IF NOT EXISTS {{render(vars.table)}} (
+              unique_row_id          text,
+              filename               text,
+              VendorID               text,
+              lpep_pickup_datetime   timestamp,
+              lpep_dropoff_datetime  timestamp,
+              store_and_fwd_flag     text,
+              RatecodeID             text,
+              PULocationID           text,
+              DOLocationID           text,
+              passenger_count        integer,
+              trip_distance          double precision,
+              fare_amount            double precision,
+              extra                  double precision,
+              mta_tax                double precision,
+              tip_amount             double precision,
+              tolls_amount           double precision,
+              ehail_fee              double precision,
+              improvement_surcharge  double precision,
+              total_amount           double precision,
+              payment_type           integer,
+              trip_type              integer,
+              congestion_surcharge   double precision
+          );
+
+      - id: green_create_staging_table
+        type: io.kestra.plugin.jdbc.postgresql.Queries
+        sql: |
+          CREATE TABLE IF NOT EXISTS {{render(vars.staging_table)}} (
+              unique_row_id          text,
+              filename               text,
+              VendorID               text,
+              lpep_pickup_datetime   timestamp,
+              lpep_dropoff_datetime  timestamp,
+              store_and_fwd_flag     text,
+              RatecodeID             text,
+              PULocationID           text,
+              DOLocationID           text,
+              passenger_count        integer,
+              trip_distance          double precision,
+              fare_amount            double precision,
+              extra                  double precision,
+              mta_tax                double precision,
+              tip_amount             double precision,
+              tolls_amount           double precision,
+              ehail_fee              double precision,
+              improvement_surcharge  double precision,
+              total_amount           double precision,
+              payment_type           integer,
+              trip_type              integer,
+              congestion_surcharge   double precision
+          );
+
+      - id: green_truncate_staging_table
+        type: io.kestra.plugin.jdbc.postgresql.Queries
+        sql: |
+          TRUNCATE TABLE {{render(vars.staging_table)}};
+
+      - id: green_copy_in_to_staging_table
+        type: io.kestra.plugin.jdbc.postgresql.CopyIn
+        format: CSV
+        from: "{{render(vars.data)}}"
+        table: "{{render(vars.staging_table)}}"
+        header: true
+        columns: [VendorID,lpep_pickup_datetime,lpep_dropoff_datetime,store_and_fwd_flag,RatecodeID,PULocationID,DOLocationID,passenger_count,trip_distance,fare_amount,extra,mta_tax,tip_amount,tolls_amount,ehail_fee,improvement_surcharge,total_amount,payment_type,trip_type,congestion_surcharge]
+
+      - id: green_add_unique_id_and_filename
+        type: io.kestra.plugin.jdbc.postgresql.Queries
+        sql: |
+          UPDATE {{render(vars.staging_table)}}
+          SET 
+            unique_row_id = md5(
+              COALESCE(CAST(VendorID AS text), '') ||
+              COALESCE(CAST(lpep_pickup_datetime AS text), '') || 
+              COALESCE(CAST(lpep_dropoff_datetime AS text), '') || 
+              COALESCE(PULocationID, '') || 
+              COALESCE(DOLocationID, '') || 
+              COALESCE(CAST(fare_amount AS text), '') || 
+              COALESCE(CAST(trip_distance AS text), '')      
+            ),
+            filename = '{{render(vars.file)}}';
+
+      - id: green_merge_data
+        type: io.kestra.plugin.jdbc.postgresql.Queries
+        sql: |
+          MERGE INTO {{render(vars.table)}} AS T
+          USING {{render(vars.staging_table)}} AS S
+          ON T.unique_row_id = S.unique_row_id
+          WHEN NOT MATCHED THEN
+            INSERT (
+              unique_row_id, filename, VendorID, lpep_pickup_datetime, lpep_dropoff_datetime,
+              store_and_fwd_flag, RatecodeID, PULocationID, DOLocationID, passenger_count,
+              trip_distance, fare_amount, extra, mta_tax, tip_amount, tolls_amount, ehail_fee,
+              improvement_surcharge, total_amount, payment_type, trip_type, congestion_surcharge
+            )
+            VALUES (
+              S.unique_row_id, S.filename, S.VendorID, S.lpep_pickup_datetime, S.lpep_dropoff_datetime,
+              S.store_and_fwd_flag, S.RatecodeID, S.PULocationID, S.DOLocationID, S.passenger_count,
+              S.trip_distance, S.fare_amount, S.extra, S.mta_tax, S.tip_amount, S.tolls_amount, S.ehail_fee,
+              S.improvement_surcharge, S.total_amount, S.payment_type, S.trip_type, S.congestion_surcharge
+            );
+  
+  # 실행이 끝나면 용량 차지를 막기 위해 임시 CSV 파일 삭제
+  - id: purge_files
+    type: io.kestra.plugin.core.storage.PurgeCurrentExecutionFiles
+    description: This will remove output files. If you'd like to explore Kestra outputs, disable it.
+
+# 모든 Postgres 작업에 공통으로 적용할 접속 정보
+pluginDefaults:
+  - type: io.kestra.plugin.jdbc.postgresql
+    values:
+      # 아까 Docker로 띄운 DB 주소!
+      # docker-compose.yaml에서 설정한 DB 서비스 이름과 같아야 함 (도커 네트워크로 엮여있는)
+      url: jdbc:postgresql://pgdatabase:5432/ny_taxi
+      # 원래는 이거 .env에 넣어서 써야 함 (하드코딩 X)
+      username: root
+      password: root

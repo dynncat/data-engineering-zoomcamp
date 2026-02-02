@@ -2,7 +2,7 @@
 FROM python:3.13.11-slim
 
 # set up our image by installing prerequisites; pandas in this case
-RUN pip install pandas pyarrow
+RUN pip install pandas pyarrow sqlalchemy psycopg2-binary click
 
 # set up the working directory inside the container
 WORKDIR /app
