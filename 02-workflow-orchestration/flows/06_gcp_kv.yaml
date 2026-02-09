@@ -1,28 +1,31 @@
-id: 06_gcp_kv
-namespace: zoomcamp
+id: 06_gcp_kv          # 이 워크플로우의 고유 이름 (ID)
+namespace: zoomcamp    # 이 워크플로우가 속한 그룹 (폴더 개념)
 
 tasks:
+  # [Task 1] GCP 프로젝트 ID 저장하기
   - id: gcp_project_id
-    type: io.kestra.plugin.core.kv.Set
-    key: GCP_PROJECT_ID
-    kvType: STRING
-    value: kestra-sandbox # TODO replace with your project id
+    type: io.kestra.plugin.core.kv.Set  # ★핵심★: Kestra의 KV 저장소에 값을 '저장(Set)'하는 플러그인
+    key: GCP_PROJECT_ID                 # 저장할 변수의 이름 (Key)
+    kvType: STRING                      # 저장할 값의 타입 (문자열)
+    value: data-engineering-camp-486909        # 실제 저장할 내용 (Google Cloud 프로젝트 ID)
 
+  # [Task 2] GCP 리전(Region) 위치 저장하기
   - id: gcp_location
-    type: io.kestra.plugin.core.kv.Set
-    key: GCP_LOCATION
-    kvType: STRING
-    value: europe-west2
+    type: io.kestra.plugin.core.kv.Set  # 역시 KV 저장소에 값을 저장합니다.
+    key: GCP_LOCATION                   # 변수 이름: 위치 정보
+    kvType: STRING                      # 타입: 문자열
+    value: asia-northeast3              # 값: 서울 리전 (보통 한국은 asia-northeast3을 씀)
 
+  # [Task 3] 데이터가 저장될 버킷 이름 저장하기
   - id: gcp_bucket_name
     type: io.kestra.plugin.core.kv.Set
-    key: GCP_BUCKET_NAME
+    key: GCP_BUCKET_NAME                # 변수 이름: 버킷 이름
     kvType: STRING
-    value: your-name-kestra # TODO make sure it's globally unique!
+    value: data-engineering-camp-yj     # 값: 전 세계에서 유일해야 하는 버킷 이름 (중복되면 에러 남!)
 
+  # [Task 4] BigQuery 데이터셋 이름 저장하기
   - id: gcp_dataset
     type: io.kestra.plugin.core.kv.Set
-    key: GCP_DATASET
+    key: GCP_DATASET                    # 변수 이름: 데이터셋 이름
     kvType: STRING
-    value: zoomcamp
-
+    value: zoomcamp                     # 값: BigQuery 내에서 사용할 데이터셋 명칭

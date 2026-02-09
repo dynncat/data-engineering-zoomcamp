@@ -2,22 +2,25 @@ id: 07_gcp_setup
 namespace: zoomcamp
 
 tasks:
+  # [Task 1] 구글 클라우드 스토리지(GCS) 버킷 만들기
   - id: create_gcs_bucket
     type: io.kestra.plugin.gcp.gcs.CreateBucket
-    ifExists: SKIP
-    storageClass: REGIONAL
-    name: "{{kv('GCP_BUCKET_NAME')}}" # make sure it's globally unique!
+    ifExists: SKIP                      # ★중요★: 이미 버킷이 있다면 에러 내지 말고 그냥 넘어가라! (멱등성)
+    storageClass: REGIONAL              # 데이터 저장 등급 (REGIONAL: 특정 지역에 저장, 자주 액세스할 때 좋음)
+    name: "{{kv('GCP_BUCKET_NAME')}}"   # kv에 저장해놨던 버킷 이름
 
+  # [Task 2] 빅쿼리(BigQuery) 데이터셋 만들기
   - id: create_bq_dataset
     type: io.kestra.plugin.gcp.bigquery.CreateDataset
-    name: "{{kv('GCP_DATASET')}}"
-    ifExists: SKIP
+    name: "{{kv('GCP_DATASET')}}"       # kv에 저장했던 데이터셋 이름('zoomcamp')을 꺼내옴
+    ifExists: SKIP                      # 역시 이미 있으면 패스!
 
+# [공통 설정] 이 파일 안의 모든 GCP 관련 태스크에 자동 적용됨
 pluginDefaults:
   - type: io.kestra.plugin.gcp
     values:
-      serviceAccount: "{{kv('GCP_CREDS')}}"
-      projectId: "{{kv('GCP_PROJECT_ID')}}"
-      location: "{{kv('GCP_LOCATION')}}"
-      bucket: "{{kv('GCP_BUCKET_NAME')}}"
-
+      # 매번 인증정보 입력하기 귀찮으니까 여기서 한 번에 설정
+      serviceAccount: "{{secret('GCP_CREDS')}}"   # 구글 클라우드 접속 열쇠 (Service Account Key)
+      projectId: "{{kv('GCP_PROJECT_ID')}}"   # 프로젝트 ID
+      location: "{{kv('GCP_LOCATION')}}"      # 리전 위치 (asia-northeast3 등)
+      bucket: "{{kv('GCP_BUCKET_NAME')}}"     # 기본 버킷 이름
