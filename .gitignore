@@ -221,3 +221,7 @@ ny_taxi_data/
 
 docker-compose.yaml
 keys/
+.bruin.yml
+logs/runs
+logs/*.log
+*.py[cod]
